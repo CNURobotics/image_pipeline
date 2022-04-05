@@ -54,6 +54,8 @@ struct ImageFlipConfig
   std::string output_frame_id;
   int rotation_steps;
   bool use_camera_info;
+  std::string in_image_topic_name;
+  std::string out_image_topic_name;
 
 };
 
@@ -70,6 +72,7 @@ private:
   void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr & msg);
   void do_work(
     const sensor_msgs::msg::Image::ConstSharedPtr & msg,
+    const sensor_msgs::msg::CameraInfo::ConstSharedPtr & cam_info,
     const std::string input_frame_from_msg);
   void subscribe();
   void unsubscribe();

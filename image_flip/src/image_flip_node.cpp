@@ -57,6 +57,8 @@ ImageFlipNode::ImageFlipNode()
   config_.output_frame_id = this->declare_parameter("output_frame_id", std::string(""));
   config_.rotation_steps = this->declare_parameter("rotation_steps", 2);
   config_.use_camera_info = this->declare_parameter("use_camera_info", true);
+  config_.in_image_topic_name = this->declare_parameter("in_image_topic_name", std::string("image"));
+  config_.out_image_topic_name = this->declare_parameter("out_image_topic_name", std::string("rotated_image"));
 
   auto reconfigureCallback =
     [this](std::vector<rclcpp::Parameter> parameters) -> rcl_interfaces::msg::SetParametersResult
@@ -67,7 +69,7 @@ ImageFlipNode::ImageFlipNode()
       result.successful = true;
       for (auto parameter : parameters) {
         if (parameter.get_name() == "output_frame_id") {
-          config_.output_frame_id = parameter;
+          config_.output_frame_id = parameter.as_string();
           RCLCPP_INFO(get_logger(), "Reset output_frame_id '%s'", config_.output_frame_id);
         } else if (parameter.get_name() == "rotation_steps") {
           config_.rotation_steps = parameter.as_int();
@@ -110,9 +112,9 @@ void ImageFlipNode::imageCallbackWithInfo(
   const sensor_msgs::msg::CameraInfo::ConstSharedPtr & cam_info)
 {
   std::string frame_id = cam_info->header.frame_id;
-  if frame_id.length() == 0:
+  if (frame_id.length() == 0) {
     frame_id = msg->header.frame_id;
-
+  }
   do_work(msg, cam_info, frame_id);
 }
 
@@ -123,10 +125,9 @@ void ImageFlipNode::imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr 
 
 void ImageFlipNode::do_work(
   const sensor_msgs::msg::Image::ConstSharedPtr & msg,
-  const sensor_msgs::msg::CameraInfo::ConstSharedPtr & cam_info
+  const sensor_msgs::msg::CameraInfo::ConstSharedPtr & cam_info,
   const std::string input_frame_from_msg)
 {
-  try {
 
   // Transform the image.
   try {
@@ -139,7 +140,7 @@ void ImageFlipNode::do_work(
       transpose(in_image, out_image);
       flip(out_image, out_image,0); //transpose+flip(0)=CCW
     } else if (config_.rotation_steps ==2){
-      flip(matImage, out_image,-1);    //flip(-1)=180
+      flip(in_image, out_image,-1);    //flip(-1)=180
     } else if (config_.rotation_steps == 3){
       transpose(in_image, out_image);
       flip(out_image, out_image,1); //transpose+flip(1)=CW
@@ -151,12 +152,12 @@ void ImageFlipNode::do_work(
     // Publish the image.
     sensor_msgs::msg::Image::SharedPtr out_img =
       cv_bridge::CvImage(msg->header, msg->encoding, out_image).toImageMsg();
-    out_img->header.frame_id = transform.child_frame_id;
+    out_img->header.frame_id = input_frame_from_msg;
 
-    if cam_pub_ {
-      sensor_msgs::msg::CameraInfo out_info(*cam_info);
-      out_info.height = out_img.height;
-      out_info.width = out_img.width;
+    if (cam_pub_) {
+      sensor_msgs::msg::CameraInfo::SharedPtr out_info(new sensor_msgs::msg::CameraInfo(*cam_info));
+      out_info->height = out_img->height;
+      out_info->width = out_img->width;
       cam_pub_.publish(out_img, out_info);
     }
     else {
@@ -185,14 +186,17 @@ void ImageFlipNode::do_work(
 
 void ImageFlipNode::subscribe()
 {
-  RCUTILS_LOG_DEBUG("Subscribing to image topic.");
+  // This is a foxy hack while waiting on rclcpp resolve_topic_name
+  std::string image_topic = config_.in_image_topic_name;
+  RCUTILS_LOG_INFO("Subscribing to image topic %s.", image_topic.c_str());
+
   if (config_.use_camera_info) {
     auto custom_qos = rmw_qos_profile_system_default;
     custom_qos.depth = 3;
 
     cam_sub_ = image_transport::create_camera_subscription(
       this,
-      "image",
+      image_topic, //"image",
       std::bind(
         &ImageFlipNode::imageCallbackWithInfo, this,
         std::placeholders::_1, std::placeholders::_2),
@@ -203,7 +207,7 @@ void ImageFlipNode::subscribe()
     custom_qos.depth = 3;
     img_sub_ = image_transport::create_subscription(
       this,
-      "image",
+      image_topic, //"image",
       std::bind(&ImageFlipNode::imageCallback, this, std::placeholders::_1),
       "raw",
       custom_qos);
@@ -254,12 +258,15 @@ void ImageFlipNode::onInit()
   //----------------------------------------------------
 
   connectCb();
-  img_pub_ = image_transport::create_publisher(this, "output_image");
+  // This is a foxy hack while waiting on rclcpp resolve_topic_name
+  std::string out_image_topic = config_.out_image_topic_name;
+  RCUTILS_LOG_DEBUG("Advertising to image topic %s.", out_image_topic.c_str());
 
-  if config_.use_camera_info:
-    cam_pub_ = image_transport::create_camera_publisher(this, "output_image");
-  else:
-    img_pub_ = image_transport::create_publisher(this, "output_image");
+  if (config_.use_camera_info) {
+    cam_pub_ = image_transport::create_camera_publisher(this, out_image_topic);
+  } else {
+    img_pub_ = image_transport::create_publisher(this, out_image_topic);
+  }
 
   tf_pub_ = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
 }
