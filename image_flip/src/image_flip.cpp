@@ -149,13 +149,19 @@ void ImageFlipNode::do_work(
       out_image = in_image;
     }
 
+    // Update the transform
+    transform_.header.frame_id = input_frame_from_msg;
+    transform_.child_frame_id = frameWithDefault(config_.output_frame_id, input_frame_from_msg + "_rotated");
+    transform_.header.stamp = msg->header.stamp;
+
     // Publish the image.
     sensor_msgs::msg::Image::SharedPtr out_img =
       cv_bridge::CvImage(msg->header, msg->encoding, out_image).toImageMsg();
-    out_img->header.frame_id = input_frame_from_msg;
+    out_img->header.frame_id = transform_.child_frame_id;
 
     if (cam_pub_) {
       sensor_msgs::msg::CameraInfo::SharedPtr out_info(new sensor_msgs::msg::CameraInfo(*cam_info));
+      out_info->header.frame_id = out_img->header.frame_id;
       out_info->height = out_img->height;
       out_info->width = out_img->width;
       cam_pub_.publish(out_img, out_info);
@@ -165,10 +171,6 @@ void ImageFlipNode::do_work(
     }
 
     // Publish the transform.
-    transform_.header.frame_id = input_frame_from_msg;
-    transform_.child_frame_id = frameWithDefault(
-      config_.output_frame_id, input_frame_from_msg + "_rotated");
-    transform_.header.stamp = msg->header.stamp;
 
     if (tf_pub_) {
       tf_pub_->sendTransform(transform_);
